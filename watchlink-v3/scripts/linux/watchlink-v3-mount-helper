@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  watchlink-v3-mount-helper prepare-drvfs-mount --drive <LETTER> --mount-point /mnt/<letter> --owner <uid:gid|user:group>
+
+Commands:
+  prepare-drvfs-mount   Clean stale /mnt/<letter>, mount <LETTER>: via drvfs, then chown the mount point
+USAGE
+}
+
+require_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    echo "[ERR] watchlink-v3-mount-helper must run as root." >&2
+    exit 100
+  fi
+}
+
+validate_drive() {
+  local drive="$1"
+  [[ "$drive" =~ ^[A-Za-z]$ ]] || {
+    echo "[ERR] drive must be a single letter, got: $drive" >&2
+    exit 101
+  }
+}
+
+validate_mount_point() {
+  local drive_lower="$1"
+  local mount_point="$2"
+  local expected="/mnt/${drive_lower}"
+  [[ "$mount_point" == "$expected" ]] || {
+    echo "[ERR] mount point must be exactly $expected, got: $mount_point" >&2
+    exit 102
+  }
+}
+
+validate_owner() {
+  local owner="$1"
+  [[ "$owner" =~ ^[0-9]+:[0-9]+$ || "$owner" =~ ^[A-Za-z_][A-Za-z0-9_-]*:[A-Za-z_][A-Za-z0-9_-]*$ ]] || {
+    echo "[ERR] owner must look like uid:gid or user:group, got: $owner" >&2
+    exit 103
+  }
+}
+
+prepare_drvfs_mount() {
+  local drive="$1"
+  local mount_point="$2"
+  local owner="$3"
+  local drive_lower="${drive,,}"
+
+  validate_drive "$drive"
+  validate_mount_point "$drive_lower" "$mount_point"
+  validate_owner "$owner"
+
+  if /usr/bin/mountpoint -q "$mount_point"; then
+    /usr/bin/chown "$owner" "$mount_point"
+    return 0
+  fi
+
+  /usr/bin/rm -rf "$mount_point"
+  /usr/bin/mkdir -p "$mount_point"
+  /usr/bin/mount -t drvfs "${drive^^}:" "$mount_point"
+  /usr/bin/chown "$owner" "$mount_point"
+
+  /usr/bin/mountpoint -q "$mount_point" || {
+    echo "[ERR] drvfs mount did not become active at $mount_point" >&2
+    exit 104
+  }
+}
+
+require_root
+
+[[ $# -ge 1 ]] || {
+  usage
+  exit 1
+}
+
+cmd="$1"
+shift
+
+case "$cmd" in
+  prepare-drvfs-mount)
+    drive=""
+    mount_point=""
+    owner=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --drive) drive="$2"; shift 2 ;;
+        --mount-point) mount_point="$2"; shift 2 ;;
+        --owner) owner="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *)
+          echo "[ERR] Unknown arg: $1" >&2
+          usage
+          exit 1
+          ;;
+      esac
+    done
+
+    [[ -n "$drive" && -n "$mount_point" && -n "$owner" ]] || {
+      echo "[ERR] --drive, --mount-point and --owner are required." >&2
+      usage
+      exit 1
+    }
+    prepare_drvfs_mount "$drive" "$mount_point" "$owner"
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    echo "[ERR] Unknown command: $cmd" >&2
+    usage
+    exit 1
+    ;;
+esac

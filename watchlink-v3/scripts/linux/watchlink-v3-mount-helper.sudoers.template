@@ -1,0 +1,15 @@
+Defaults:__WATCHLINK_USER__ timestamp_timeout=1080
+
+# watchlink-v3 minimal mount privilege: only allow the audited helper, not raw rm/mount/chown.
+__WATCHLINK_USER__ ALL=(root) NOPASSWD: __WATCHLINK_HELPER_DST__
+
+# v3dl com still enters ensure_sudo_ready() even though the com path itself does not need root.
+# Without changing v3dl, these are the smallest commands that stop it from prompting for sudo.
+Cmnd_Alias V3DL_COM_CMDS = \
+    /usr/bin/true, \
+    /usr/sbin/visudo, \
+    /usr/bin/test, \
+    /usr/bin/cmp, \
+    /usr/bin/install
+
+__V3DL_RULE__
