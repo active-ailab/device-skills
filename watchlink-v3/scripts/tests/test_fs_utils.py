@@ -30,6 +30,8 @@ class FsUtilsTests(unittest.TestCase):
         self.assertEqual(mounted, Path("/mnt/f/sport/gomore"))
         run_mock.assert_called_once_with(
             [
+                "sudo",
+                "-n",
                 str(helper),
                 "prepare-drvfs-mount",
                 "--drive",

@@ -498,7 +498,7 @@ case "$cmd" in
     ;;
   fs)
     python_bin="$(detect_python_bin)" || exit 6
-    PYTHONPATH="$ROOT_DIR/common${PYTHONPATH:+:$PYTHONPATH}" exec "$python_bin" "$FS_PY" "$@"
+    PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" exec "$python_bin" "$FS_PY" "$@"
     ;;
   vbus)
     [[ $# -lt 1 ]] && { usage; exit 1; }

@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SAFE_MOUNT_ROOT="/mnt"
+
 usage() {
   cat <<'USAGE'
 Usage:
-  watchlink-v3-mount-helper prepare-drvfs-mount --drive <LETTER> --mount-point /mnt/<letter> --owner <uid:gid|user:group>
+  watchlink-v3-mount-helper prepare-drvfs-mount --drive <LETTER> --mount-point <safe-mount-point> --owner <uid:gid|user:group>
 
 Commands:
-  prepare-drvfs-mount   Clean stale /mnt/<letter>, mount <LETTER>: via drvfs, then chown the mount point
+  prepare-drvfs-mount   Clean stale dedicated mount point, mount <LETTER>: via drvfs, then ensure the mount point is writable
 USAGE
 }
 
@@ -29,9 +31,10 @@ validate_drive() {
 validate_mount_point() {
   local drive_lower="$1"
   local mount_point="$2"
-  local expected="/mnt/${drive_lower}"
-  [[ "$mount_point" == "$expected" ]] || {
-    echo "[ERR] mount point must be exactly $expected, got: $mount_point" >&2
+  local legacy="/mnt/${drive_lower}"
+  local dedicated="${SAFE_MOUNT_ROOT}/${drive_lower}"
+  [[ "$mount_point" == "$legacy" || "$mount_point" == "$dedicated" ]] || {
+    echo "[ERR] mount point must be exactly $legacy or $dedicated, got: $mount_point" >&2
     exit 102
   }
 }
@@ -44,6 +47,47 @@ validate_owner() {
   }
 }
 
+mount_is_active() {
+  local mount_point="$1"
+  /usr/bin/mountpoint -q "$mount_point" >/dev/null 2>&1 && return 0
+  /usr/bin/findmnt -M "$mount_point" >/dev/null 2>&1 && return 0
+  return 1
+}
+
+mount_is_usable() {
+  local mount_point="$1"
+  /usr/bin/ls -d "$mount_point" >/dev/null 2>&1
+}
+
+ensure_mount_writable() {
+  local mount_point="$1"
+  local owner="$2"
+
+  if /usr/bin/chown "$owner" "$mount_point" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [[ -w "$mount_point" ]]; then
+    return 0
+  fi
+
+  echo "[ERR] mount point is not writable and chown failed: $mount_point" >&2
+  exit 106
+}
+
+detach_mount_layers() {
+  local mount_point="$1"
+  local attempts=0
+  while mount_is_active "$mount_point"; do
+    attempts=$((attempts + 1))
+    if [[ "$attempts" -gt 8 ]]; then
+      echo "[ERR] unable to fully detach stale mount layers at $mount_point" >&2
+      exit 105
+    fi
+    /usr/bin/umount -l "$mount_point" >/dev/null 2>&1 || /usr/bin/umount "$mount_point"
+  done
+}
+
 prepare_drvfs_mount() {
   local drive="$1"
   local mount_point="$2"
@@ -54,17 +98,20 @@ prepare_drvfs_mount() {
   validate_mount_point "$drive_lower" "$mount_point"
   validate_owner "$owner"
 
-  if /usr/bin/mountpoint -q "$mount_point"; then
-    /usr/bin/chown "$owner" "$mount_point"
-    return 0
+  if mount_is_active "$mount_point"; then
+    if mount_is_usable "$mount_point"; then
+      ensure_mount_writable "$mount_point" "$owner"
+      return 0
+    fi
+
+    detach_mount_layers "$mount_point"
   fi
 
-  /usr/bin/rm -rf "$mount_point"
   /usr/bin/mkdir -p "$mount_point"
   /usr/bin/mount -t drvfs "${drive^^}:" "$mount_point"
-  /usr/bin/chown "$owner" "$mount_point"
+  ensure_mount_writable "$mount_point" "$owner"
 
-  /usr/bin/mountpoint -q "$mount_point" || {
+  mount_is_active "$mount_point" || {
     echo "[ERR] drvfs mount did not become active at $mount_point" >&2
     exit 104
   }

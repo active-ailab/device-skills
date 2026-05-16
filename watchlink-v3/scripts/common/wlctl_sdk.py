@@ -7,9 +7,9 @@ import time
 from pathlib import Path
 from typing import Dict, Optional, Protocol, Sequence, Tuple
 
-from .diagnose_utils import append_runtime_hint, diagnose_runtime
-from .disk_utils import wait_for_disk_root
-from .watchlink_discovery import build_wlctl_path
+from common.diagnose_utils import append_runtime_hint, diagnose_runtime
+from common.disk_utils import wait_for_disk_root
+from common.watchlink_discovery import build_wlctl_path
 
 
 IS_WIN32 = sys.platform == "win32"

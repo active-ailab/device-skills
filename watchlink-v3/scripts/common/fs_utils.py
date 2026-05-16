@@ -12,6 +12,9 @@ from typing import Iterable, List, Optional, Sequence
 
 _WILDCARD_CHARS = "*?["
 _DEFAULT_MOUNT_HELPER = Path("/usr/local/sbin/watchlink-v3-mount-helper")
+_DEFAULT_WSL_MOUNT_BASE = Path(
+    os.environ.get("WLCTL_WSL_MOUNT_BASE", "/mnt")
+)
 
 
 def is_wsl_environment() -> bool:
@@ -43,6 +46,8 @@ def _run_mount_helper(helper: Path, drive_letter: str, mount_point: Path) -> Non
     owner = f"{os.getuid()}:{os.getgid()}"
     proc = subprocess.run(
         [
+            "sudo",
+            "-n",
             str(helper),
             "prepare-drvfs-mount",
             "--drive",
@@ -68,7 +73,7 @@ def ensure_local_mount_root(root: Path) -> Path:
         return root
 
     drive_letter = path_text[0].lower()
-    mount_point = Path(f"/mnt/{drive_letter}")
+    mount_point = _DEFAULT_WSL_MOUNT_BASE / drive_letter
 
     # Check if the mount point exists and is a real filesystem.
     # A corrupted/stale /mnt/{letter} from a previous failed mount can cause
