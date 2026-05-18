@@ -1,6 +1,6 @@
 param(
     [Parameter(Position=0)]
-    [ValidateSet('help','serial','listen','monkey','disk','fs','vbus','ready','awake','diagnose')]
+    [ValidateSet('help','serial','listen','flash','monkey','disk','fs','vbus','ready','awake','diagnose')]
     [string]$Action,
 
     [Parameter(Position=1)]
@@ -9,6 +9,7 @@ param(
     [string]$Role,
     [string]$Port,
     [string]$Command,
+    [string]$File,
     [string]$Message,
     [string]$MessageFile,
     [ValidateSet('data','log')]
@@ -23,6 +24,8 @@ param(
     [int]$Seconds = 10,
     [int]$Timeout = 60,
     [string]$ProbeCommand = 'monkey -g',
+    [ValidateSet('auto','app','ota')]
+    [string]$FlashMode = 'auto',
     [string]$Encoding = 'utf-8',
     [switch]$Recursive,
     [switch]$MissingOk,
@@ -53,6 +56,7 @@ wlctl - stable entrypoint for device-watchlink-v3
 Usage:
   wlctl.ps1 serial -Role UART|MGR [-Port COMx] -Command "COMMAND" [-ReadMs N]
   wlctl.ps1 listen [-Role UART|MGR] [-Port COMx] [-Seconds N]
+    wlctl.ps1 flash [-File PATH] [-FlashMode auto|app|ota]
   wlctl.ps1 monkey on [-Port COMx] [-IntervalMs N] [-Print on|off] [-Mem 0|6]
   wlctl.ps1 monkey off [-Port COMx]
   wlctl.ps1 monkey status [-Port COMx]
@@ -66,6 +70,8 @@ Usage:
 Examples:
   wlctl.ps1 serial -Role MGR -Command "WL+FWVER=?"
   wlctl.ps1 serial -Role UART -Command "monkey -g"
+    wlctl.ps1 flash -File .\build\out\watch@mhs003\binary\watch@mhs003_fw_only_sign.zip
+    wlctl.ps1 flash -File .\build\out\watch@mhs003\binary\watch@mhs003_ota_sign.zip
   wlctl.ps1 monkey on -IntervalMs 1000 -Print off -Mem 0
   wlctl.ps1 monkey status
   wlctl.ps1 disk mount-data
@@ -114,6 +120,78 @@ if (-not (Test-Path $DiagnosePy)) {
 }
 if (-not (Test-Path $FsPy)) {
     throw "fs_utils.py not found: $FsPy"
+}
+
+function Get-V3dlCommand() {
+    if (-not [string]::IsNullOrWhiteSpace($env:WLCTL_V3DL_BIN)) {
+        return $env:WLCTL_V3DL_BIN
+    }
+    $commandInfo = Get-Command v3dl -ErrorAction SilentlyContinue
+    if ($commandInfo) {
+        return $commandInfo.Source
+    }
+    throw 'v3dl not found. Set WLCTL_V3DL_BIN or add v3dl to PATH.'
+}
+
+function Resolve-FlashMode([string]$packagePath, [string]$requestedMode) {
+    $packageName = [System.IO.Path]::GetFileName($packagePath)
+    $inferredMode = $null
+
+    if ($packageName -like '*_fw_only_sign.zip') {
+        $inferredMode = 'app'
+    } elseif ($packageName -like '*_ota_sign.zip' -or $packageName -like '*_ota_remake_sign.zip') {
+        $inferredMode = 'ota'
+    }
+
+    if ($inferredMode) {
+        return @{
+            Mode = $inferredMode
+            Inferred = $inferredMode
+        }
+    }
+
+    if ($requestedMode -eq 'auto') {
+        throw 'Cannot infer flash mode from package name; use -FlashMode app or -FlashMode ota.'
+    }
+
+    return @{
+        Mode = $requestedMode
+        Inferred = $null
+    }
+}
+
+function Invoke-Flash([string]$packagePath, [string]$requestedMode) {
+    if ([string]::IsNullOrWhiteSpace($packagePath)) {
+        throw 'flash requires a package path. Use -File or positional Arg1.'
+    }
+    if (-not (Test-Path $packagePath)) {
+        throw "Package not found: $packagePath"
+    }
+
+    $resolved = Resolve-FlashMode -packagePath $packagePath -requestedMode $requestedMode
+    $mode = [string]$resolved.Mode
+    $inferredMode = [string]$resolved.Inferred
+
+    if ($inferredMode -and $requestedMode -ne 'auto' -and $requestedMode -ne $inferredMode) {
+        Write-Output "[WARN] Package name suggests '$inferredMode'; ignoring requested mode '$requestedMode'."
+    }
+
+    $v3dl = Get-V3dlCommand
+    Write-Output "[INFO] Flash mode: $mode"
+    Write-Output "[INFO] Package: $packagePath"
+    $packageName = [System.IO.Path]::GetFileName($packagePath)
+    $packageDir = Split-Path -Parent $packagePath
+
+    if ($mode -eq 'app' -and $packageName -like '*_fw_only_sign.zip') {
+        Write-Output "[INFO] Source directory: $packageDir"
+        & $v3dl 'app' '-d' $packageDir
+    } else {
+        & $v3dl $mode '-f' $packagePath
+    }
+    if ($LASTEXITCODE -ne 0) {
+        $script:LastChildExitCode = $LASTEXITCODE
+        throw ("Invoke-Flash failed with exit code $LASTEXITCODE (mode=$mode package=$packagePath)")
+    }
 }
 
 function Invoke-Serial([string]$role, [string]$port, [string]$cmd, [int]$readMs) {
@@ -404,6 +482,10 @@ switch ($Action) {
             $roleToUse = 'MGR'
         }
         Invoke-Serial -role $roleToUse -port $Port -cmd $cmdToUse -readMs $ReadMs
+    }
+    'flash' {
+        $packagePath = if ($File) { $File } else { $Arg1 }
+        Invoke-Flash -packagePath $packagePath -requestedMode $FlashMode
     }
     'listen' {
         $roleToUse = if ($Role) { $Role } else { 'UART' }

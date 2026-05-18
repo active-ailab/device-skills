@@ -16,6 +16,7 @@ wlctl - stable entrypoint for device-watchlink-v3
 Usage:
   wlctl.sh serial --role UART|MGR [--port PORT] --cmd "COMMAND" [--read-ms N]
   wlctl.sh listen --role UART|MGR [--port PORT] [--seconds N]
+  wlctl.sh flash <PACKAGE> [--mode auto|app|ota]
   wlctl.sh monkey on [--port PORT] [--interval-ms N] [--print on|off] [--mem 0|6]
   wlctl.sh monkey off [--port PORT]
   wlctl.sh monkey status [--port PORT]
@@ -29,6 +30,8 @@ Usage:
 Examples:
   wlctl.sh serial --role MGR --cmd "WL+FWVER=?"
   wlctl.sh serial --role UART --cmd "monkey -g"
+  wlctl.sh flash ./build/out/watch@mhs003/binary/watch@mhs003_fw_only_sign.zip
+  wlctl.sh flash ./build/out/watch@mhs003/binary/watch@mhs003_ota_sign.zip
   wlctl.sh monkey on --interval-ms 1000 --print off --mem 0
   wlctl.sh monkey status
   wlctl.sh disk mount-data --wait-seconds 30
@@ -116,6 +119,114 @@ uart_probe_succeeded() {
 
 run_mgr_serial() {
   "$SERIAL_SH" --role MGR "$@"
+}
+
+detect_v3dl_bin() {
+  if [[ -n "${WLCTL_V3DL_BIN:-}" ]]; then
+    echo "$WLCTL_V3DL_BIN"
+    return 0
+  fi
+  if command -v v3dl >/dev/null 2>&1; then
+    command -v v3dl
+    return 0
+  fi
+  echo "[ERR] v3dl not found; set WLCTL_V3DL_BIN or add v3dl to PATH." >&2
+  return 6
+}
+
+infer_flash_mode() {
+  local package_name="${1##*/}"
+
+  case "$package_name" in
+    *_fw_only_sign.zip)
+      echo "app"
+      ;;
+    *_ota_sign.zip|*_ota_remake_sign.zip)
+      echo "ota"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+run_flash() {
+  local package_path=""
+  local requested_mode="auto"
+  local inferred_mode=""
+  local resolved_mode=""
+  local v3dl_bin=""
+  local package_name=""
+  local package_dir=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --file|-f)
+        package_path="$2"
+        shift 2
+        ;;
+      --mode)
+        requested_mode="$2"
+        shift 2
+        ;;
+      *)
+        if [[ -z "$package_path" ]]; then
+          package_path="$1"
+          shift
+        else
+          echo "[ERR] Unknown arg: $1" >&2
+          usage
+          return 1
+        fi
+        ;;
+    esac
+  done
+
+  [[ -n "$package_path" ]] || {
+    echo "[ERR] flash requires a package path." >&2
+    usage
+    return 1
+  }
+  [[ -f "$package_path" ]] || {
+    echo "[ERR] Package not found: $package_path" >&2
+    return 2
+  }
+
+  case "$requested_mode" in
+    auto|app|ota)
+      ;;
+    *)
+      echo "[ERR] Unsupported flash mode: $requested_mode" >&2
+      return 1
+      ;;
+  esac
+
+  inferred_mode="$(infer_flash_mode "$package_path" || true)"
+  if [[ -n "$inferred_mode" ]]; then
+    resolved_mode="$inferred_mode"
+    if [[ "$requested_mode" != "auto" && "$requested_mode" != "$inferred_mode" ]]; then
+      echo "[WARN] Package name suggests '$inferred_mode'; ignoring requested mode '$requested_mode'."
+    fi
+  else
+    [[ "$requested_mode" != "auto" ]] || {
+      echo "[ERR] Cannot infer flash mode from package name; use --mode app|ota." >&2
+      return 2
+    }
+    resolved_mode="$requested_mode"
+  fi
+
+  v3dl_bin="$(detect_v3dl_bin)" || return $?
+  echo "[INFO] Flash mode: $resolved_mode"
+  echo "[INFO] Package: $package_path"
+  package_name="${package_path##*/}"
+  package_dir="$(dirname "$package_path")"
+
+  if [[ "$resolved_mode" == "app" && "$package_name" == *_fw_only_sign.zip ]]; then
+    echo "[INFO] Source directory: $package_dir"
+    exec "$v3dl_bin" app -d "$package_dir"
+  fi
+
+  exec "$v3dl_bin" "$resolved_mode" -f "$package_path"
 }
 
 run_uart_serial() {
@@ -487,6 +598,9 @@ case "$cmd" in
     fi
 
     exec "$SERIAL_SH" "${args[@]}"
+    ;;
+  flash)
+    run_flash "$@"
     ;;
   listen)
     # sugar: wlctl listen --role UART ... => run_serial_cmd_auto.sh --role UART --listen ...

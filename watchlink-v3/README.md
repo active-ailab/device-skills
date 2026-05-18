@@ -120,46 +120,6 @@ content = dev.read_file("data", "payloads/sample.txt")
 
 这样比直接开放通用系统命令更适合团队复用。
 
-## GitHub 导出
-
-如果要把当前 skill 按干净目录导出后再提交到 GitHub，优先使用仓库内的 build 脚本：
-
-```bash
-./scripts/linux/build_github_export.sh
-```
-
-这个脚本本身是对公共导出器的薄包装；如果你想在别的 skill 上复用，统一使用：
-
-```bash
-./active_skills_install/export_skill_for_github.sh --skill-dir ./device-skills/watchlink-v3
-```
-
-默认输出到：
-
-```text
-build/watchlink-v3/
-```
-
-常见用法：
-
-```bash
-# 导出到自定义目录
-./scripts/linux/build_github_export.sh --output-dir /tmp/export
-
-# 导出并同时生成 tar.gz
-./scripts/linux/build_github_export.sh --archive /tmp/watchlink-v3.tar.gz
-```
-
-导出时会自动排除：
-
-- `__pycache__/`
-- `*.pyc`
-- `build/`
-- `dist/`
-- 本地 git 元数据
-
-这样导出的目录更适合直接初始化 GitHub 仓库或交给团队成员二次整理。
-
 ## 依赖
 
 ### 必需依赖

@@ -1,6 +1,6 @@
 ---
 name: watchlink-v3
-description: Watch-Link V3 设备管理：串口(UART/MGR)发命令、monkey 测试自动化、固件烧录(v3dl app/ota)、磁盘挂载(mount data/log)、读取设备文件、读取指定路径、写文件到设备、pull/push device files、删除设备日志/文件、VBUS 电源控制、设备就绪检测与复位、端口自动发现、健康检查与运行时诊断。Windows/WSL/Linux。触发词: 串口连不上, 发串口命令, monkey 启动停止, 刷机, OTA 升级, 挂盘, 取日志, 读取设备文件, 读取指定路径, 写文件到设备, push 文件到 DATA 盘, pull device logs, 删除设备日志, VBUS 没电, 设备不响应, 复位, COM 口找不到, 健康检查, quick check, WL+DISK, WL+RESET.
+description: Watch-Link V3 设备管理：串口(UART/MGR)发命令、monkey 测试自动化、固件烧录(v3dl app/ota, wlctl flash)、磁盘挂载(mount data/log)、读取设备文件、读取指定路径、写文件到设备、pull/push device files、删除设备日志/文件、VBUS 电源控制、设备就绪检测与复位、端口自动发现、健康检查与运行时诊断。Windows/WSL/Linux。触发词: 串口连不上, 发串口命令, monkey 启动停止, 刷机, 下载单固件, 下载固件整包, 下载OTA包, 全量下载, wlctl flash, v3dl app, v3dl ota, OTA 升级, 挂盘, 取日志, 读取设备文件, 读取指定路径, 写文件到设备, push 文件到 DATA 盘, pull device logs, 删除设备日志, VBUS 没电, 设备不响应, 复位, COM 口找不到, 健康检查, quick check, WL+DISK, WL+RESET.
 ---
 
 # Device WatchLink V3
@@ -79,14 +79,15 @@ Expose these operations to higher-level skills:
 
 1. Serial command: `wlctl serial ...`
 2. Serial listen: `wlctl listen ...`
-3. Monkey control: `wlctl monkey on|off|status`
-4. Disk mode control: `wlctl disk mount-data|mount-log|unmount`
-5. Ready check: `wlctl ready [--port PORT] [--timeout N]`
-6. Shell stabilize: `wlctl awake [--port PORT] [--timeout N]`
-7. Runtime diagnose: `wlctl diagnose [--message TEXT] [--output json|text]`
-8. Machine-readable status: `wlctl vbus|ready|awake ... --output json` / `-Output json`
-9. Port selection: omit the port by default and let the script auto-detect; pass `--port` only when needed
-10. Device filesystem primitives: `wlctl fs ls|read|pull|push|rm`
+3. Firmware package flash: `wlctl flash <package> [--mode auto|app|ota]`
+4. Monkey control: `wlctl monkey on|off|status`
+5. Disk mode control: `wlctl disk mount-data|mount-log|unmount`
+6. Ready check: `wlctl ready [--port PORT] [--timeout N]`
+7. Shell stabilize: `wlctl awake [--port PORT] [--timeout N]`
+8. Runtime diagnose: `wlctl diagnose [--message TEXT] [--output json|text]`
+9. Machine-readable status: `wlctl vbus|ready|awake ... --output json` / `-Output json`
+10. Port selection: omit the port by default and let the script auto-detect; pass `--port` only when needed
+11. Device filesystem primitives: `wlctl fs ls|read|pull|push|rm`
 
 ## Guardrails
 
@@ -96,8 +97,8 @@ Follow these rules strictly:
   - `monkey*` and watch shell commands go to `UART`
   - `WL+*` board-management commands go to `MGR`
 - Choose firmware download mode before executing it:
-  - requests like `fw_only`, `app only`, or firmware-only go to `v3dl app`
-  - requests like `ota_sign`, full OTA, or full package go to `v3dl ota`
+  - requests like `下载单固件` go to `v3dl app`
+  - requests like `下载固件整包`、`下载OTA包`、`全量下载` go to `v3dl ota`
 - If the user does not provide `<PROJECT_ROOT>`, ask for it instead of guessing.
 - If the port is omitted on Windows, prefer Windows port entries from `Get-PnpDevice -Class Ports` or, when that is permission-limited, `pnputil /enum-devices /class Ports`, using only `OK`/`Started` `WLINK <id> MGR/UART (COMx)` pairs. If exactly one online WLINK device pair exists, use that pair automatically. Otherwise fall back to existing auto-detection and require an explicit port when multiple matches remain.
 - Require an extra confirmation before risky operations such as `fm_ota`, formatting, or `WRITE_OTP`.
@@ -109,6 +110,9 @@ Map user intent like this:
 - Start monkey: `wlctl monkey on`
 - Stop monkey: `wlctl monkey off`
 - Check monkey status: `wlctl monkey status`
+- Flash a package by filename: `wlctl flash <package>`
+- 下载单固件: `v3dl app` / `wlctl flash <fw_only_sign.zip>`
+- 下载固件整包 / 下载OTA包 / 全量下载: `v3dl ota -f ...` / `wlctl flash <ota_sign.zip>`
 - Wait for device ready: `wlctl ready`
 - Re-establish shell after reboot: `wlctl awake`
 - Diagnose bridge/serial/ready failures: `wlctl diagnose`
@@ -119,8 +123,14 @@ Map user intent like this:
 - Pull device logs/files to local dir: `wlctl fs pull --disk log --from-path ... --to-path ...`
 - Push local files to device path: `wlctl fs push --disk data --from-path ... --to-path ...`
 - Remove device files or directories: `wlctl fs rm --disk data|log --path ...`
-- Flash firmware-only package: `v3dl app -f ...fw_only_sign.zip`
+- Flash firmware-only package: `v3dl app`
 - Flash OTA package: `v3dl ota -f ...ota_sign.zip`
+
+`wlctl flash` auto-routing rules:
+
+- 下载单固件 -> `*_fw_only_sign.zip` -> `v3dl app` using the package directory
+- 下载固件整包 / 下载OTA包 / 全量下载 -> `*_ota_sign.zip` / `*_ota_remake_sign.zip` -> `v3dl ota -f ...`
+- If the filename is ambiguous, pass `--mode app` or `--mode ota`
 
 ## Execution Checks
 
@@ -190,6 +200,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\skills\device\watchlink-v3
 # UART
 ./skills/device/watchlink-v3/scripts/linux/wlctl.sh serial --role UART --cmd "monkey -g"
 
+# flash
+./skills/device/watchlink-v3/scripts/linux/wlctl.sh flash ./build/out/watch@mhs003/binary/watch@mhs003_fw_only_sign.zip
+./skills/device/watchlink-v3/scripts/linux/wlctl.sh flash ./build/out/watch@mhs003/binary/watch@mhs003_ota_sign.zip
+
 # monkey
 ./skills/device/watchlink-v3/scripts/linux/wlctl.sh monkey on --interval-ms 1000 --print off --mem 0
 ./skills/device/watchlink-v3/scripts/linux/wlctl.sh monkey status
@@ -205,6 +219,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\skills\device\watchlink-v3
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\skills\device\watchlink-v3\scripts\windows\wlctl.ps1 serial -Role MGR -Command "WL+FWVER=?"
 powershell -NoProfile -ExecutionPolicy Bypass -File .\skills\device\watchlink-v3\scripts\windows\wlctl.ps1 serial -Role UART -Command "monkey -g"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\skills\device\watchlink-v3\scripts\windows\wlctl.ps1 flash -File .\build\out\watch@mhs003\binary\watch@mhs003_fw_only_sign.zip
+powershell -NoProfile -ExecutionPolicy Bypass -File .\skills\device\watchlink-v3\scripts\windows\wlctl.ps1 flash -File .\build\out\watch@mhs003\binary\watch@mhs003_ota_sign.zip
 powershell -NoProfile -ExecutionPolicy Bypass -File .\skills\device\watchlink-v3\scripts\windows\wlctl.ps1 monkey on -IntervalMs 1000 -Print off -Mem 0
 powershell -NoProfile -ExecutionPolicy Bypass -File .\skills\device\watchlink-v3\scripts\windows\wlctl.ps1 monkey status
 powershell -NoProfile -ExecutionPolicy Bypass -File .\\skills\\device\\watchlink-v3\\scripts\\windows\\wlctl.ps1 monkey off
