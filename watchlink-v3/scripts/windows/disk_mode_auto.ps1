@@ -124,15 +124,46 @@ function Invoke-DiskUtilsSelect {
     return $null
 }
 
-function Test-GomoreRoot([string]$PathText) {
-    if ([string]::IsNullOrWhiteSpace($PathText)) { return $false }
-    $path = [System.IO.Path]::GetFullPath($PathText)
-    $name = Split-Path $path -Leaf
-    if ($name -ieq 'gomore') { return $true }
-    if (Test-Path (Join-Path $path 'data_sample')) { return $true }
-    if (Test-Path (Join-Path $path 'gomore_his.data')) { return $true }
-    if (Test-Path (Join-Path $path 'lactateData.data')) { return $true }
+function Get-DriveVolumeLabel([string]$Root) {
+    if ([string]::IsNullOrWhiteSpace($Root) -or $Root.Length -lt 2) { return '' }
+    $letter = $Root.Substring(0, 1)
+    try {
+        $volume = Get-Volume -DriveLetter $letter -ErrorAction Stop
+        return [string]$volume.FileSystemLabel
+    } catch {
+        return ''
+    }
+}
+
+function Test-DataVolumeLabel([string]$Label) {
+    if ([string]::IsNullOrWhiteSpace($Label)) { return $false }
+    $normalized = $Label.ToUpperInvariant()
+    foreach ($token in @('SYSTEM','WLINK','IMAGE','IMG','BOOT')) {
+        if ($normalized.Contains($token)) { return $false }
+    }
+    return $normalized.StartsWith('DATA')
+}
+
+function Test-WatchlinkVolumeLabel([string]$Label) {
+    if ([string]::IsNullOrWhiteSpace($Label)) { return $false }
+    $normalized = $Label.ToUpperInvariant()
+    if ($normalized.StartsWith('DATA')) { return $true }
+    if ($normalized.StartsWith('SYSTEM')) { return $true }
+    if ($normalized.Contains('WLINK')) { return $true }
+    if ($normalized.Contains('IMAGE')) { return $true }
+    if ($normalized -eq 'IMG') { return $true }
     return $false
+}
+
+function Get-WatchlinkDriveRoots {
+    $roots = @(Get-ExternalDriveRoots)
+    $selected = @()
+    foreach ($root in $roots) {
+        if (Test-WatchlinkVolumeLabel -Label (Get-DriveVolumeLabel -Root $root)) {
+            $selected += $root
+        }
+    }
+    return @($selected | Select-Object -Unique)
 }
 
 function Select-DataRoot([string[]]$Roots) {
@@ -141,27 +172,11 @@ function Select-DataRoot([string[]]$Roots) {
     $pythonSelected = Invoke-DiskUtilsSelect -Action 'select-data-root' -Roots $Roots
     if ($pythonSelected) { return $pythonSelected }
 
-    if ($Roots.Count -eq 1) {
-        $single = $Roots[0]
-        if (Test-Path (Join-Path $single 'storage\sport\gomore')) {
-            return (Join-Path $single 'storage\sport\gomore')
-        }
-        if (Test-Path (Join-Path $single 'sport\gomore')) {
-            return (Join-Path $single 'sport\gomore')
-        }
-        if (Test-Path (Join-Path $single 'gomore')) {
-            return (Join-Path $single 'gomore')
-        }
-        return $single
+    foreach ($root in $Roots) {
+        if (Test-DataVolumeLabel -Label (Get-DriveVolumeLabel -Root $root)) { return $root }
     }
 
-    $withStorage = @($Roots | Where-Object { Test-Path (Join-Path $_ 'storage') })
-    if ($withStorage.Count -gt 0) { return $withStorage[0] }
-
-    $withSport = @($Roots | Where-Object { Test-Path (Join-Path $_ 'sport') })
-    if ($withSport.Count -gt 0) { return $withSport[0] }
-
-    return $Roots[0]
+    return $null
 }
 
 function Select-LogRoot([string[]]$Roots) {
@@ -196,10 +211,21 @@ function Wait-Root([scriptblock]$Selector) {
 }
 
 function Unmount-Disk {
+    $cleanupRoots = @()
+    if ($env:WLCTL_UNMOUNT_EMIT_CLEANUP -eq '1') {
+        $cleanupRoots = @(Get-WatchlinkDriveRoots)
+    }
+
     # v3dl pattern: just WL+DISK=NULL.  After NULL, VBUS restores to pre-TEMP
     # state (which is typically OFF after a fresh power cycle or previous NULL).
     [void](Invoke-MgrCommand -Command 'WL+DISK=NULL' -AllowNoResponse)
     Start-Sleep -Seconds 2
+
+    if ($env:WLCTL_UNMOUNT_EMIT_CLEANUP -eq '1') {
+        foreach ($root in $cleanupRoots) {
+            Write-Output ("[WLCTL_CLEANUP_ROOT] {0}" -f $root)
+        }
+    }
 }
 
 function Mount-DataDisk {

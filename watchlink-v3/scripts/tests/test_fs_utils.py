@@ -25,9 +25,9 @@ class FsUtilsTests(unittest.TestCase):
             mock.patch("pathlib.Path.exists", return_value=True), \
             mock.patch("common.fs_utils.subprocess.run") as run_mock:
             run_mock.return_value = mock.Mock(returncode=0, stdout="", stderr="")
-            mounted = fs_utils.ensure_local_mount_root(Path("F:\\sport\\gomore"))
+            mounted = fs_utils.ensure_local_mount_root(Path("F:\\payloads"))
 
-        self.assertEqual(mounted, Path("/mnt/f/sport/gomore"))
+        self.assertEqual(mounted, Path("/mnt/f/payloads"))
         run_mock.assert_called_once_with(
             [
                 "sudo",
@@ -57,9 +57,33 @@ class FsUtilsTests(unittest.TestCase):
             mock.patch("common.fs_utils.subprocess.run") as run_mock:
             run_mock.return_value = mock.Mock(returncode=0, stdout="", stderr="")
             with self.assertRaises(RuntimeError) as ctx:
-                fs_utils.ensure_local_mount_root(Path("F:\\sport\\gomore"))
+                fs_utils.ensure_local_mount_root(Path("F:\\payloads"))
 
         self.assertIn("Failed to mount F:", str(ctx.exception))
+
+    def test_cleanup_local_mount_root_prefers_helper_when_available(self) -> None:
+        helper = Path("/usr/local/sbin/watchlink-v3-mount-helper")
+
+        with mock.patch.object(fs_utils, "is_wsl_environment", return_value=True), \
+            mock.patch.object(fs_utils, "_get_mount_helper", return_value=helper), \
+            mock.patch("common.fs_utils.subprocess.run") as run_mock:
+            run_mock.return_value = mock.Mock(returncode=0, stdout="", stderr="")
+            fs_utils.cleanup_local_mount_root(Path("/mnt/f/payloads"))
+
+        run_mock.assert_called_once_with(
+            [
+                "sudo",
+                "-n",
+                str(helper),
+                "cleanup-drvfs-mount",
+                "--mount-point",
+                "/mnt/f",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
 
     def test_pull_mounted_paths_uses_copyfile(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -7,9 +7,11 @@ usage() {
   cat <<'USAGE'
 Usage:
   watchlink-v3-mount-helper prepare-drvfs-mount --drive <LETTER> --mount-point <safe-mount-point> --owner <uid:gid|user:group>
+  watchlink-v3-mount-helper cleanup-drvfs-mount --mount-point <safe-mount-point>
 
 Commands:
   prepare-drvfs-mount   Clean stale dedicated mount point, mount <LETTER>: via drvfs, then ensure the mount point is writable
+  cleanup-drvfs-mount   Detach drvfs mount layers from the mount point and remove any stale directory
 USAGE
 }
 
@@ -117,6 +119,26 @@ prepare_drvfs_mount() {
   }
 }
 
+cleanup_drvfs_mount() {
+  local mount_point="$1"
+  local mount_name
+
+  mount_name="$(/usr/bin/basename "$mount_point")"
+  [[ "$mount_name" =~ ^[A-Za-z]$ ]] || {
+    echo "[ERR] mount point leaf must be a single drive letter, got: $mount_point" >&2
+    exit 107
+  }
+  validate_mount_point "${mount_name,,}" "$mount_point"
+
+  if mount_is_active "$mount_point"; then
+    detach_mount_layers "$mount_point"
+  fi
+
+  if [[ -e "$mount_point" ]]; then
+    /usr/bin/rm -rf "$mount_point"
+  fi
+}
+
 require_root
 
 [[ $# -ge 1 ]] || {
@@ -152,6 +174,27 @@ case "$cmd" in
       exit 1
     }
     prepare_drvfs_mount "$drive" "$mount_point" "$owner"
+    ;;
+  cleanup-drvfs-mount)
+    mount_point=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --mount-point) mount_point="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *)
+          echo "[ERR] Unknown arg: $1" >&2
+          usage
+          exit 1
+          ;;
+      esac
+    done
+
+    [[ -n "$mount_point" ]] || {
+      echo "[ERR] --mount-point is required." >&2
+      usage
+      exit 1
+    }
+    cleanup_drvfs_mount "$mount_point"
     ;;
   -h|--help|help)
     usage

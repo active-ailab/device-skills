@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -58,20 +59,35 @@ class WatchlinkSdkTests(unittest.TestCase):
 
     def test_mount_data_uses_disk_subcommand(self) -> None:
         runner = MockCmdRunner()
-        runner.responses[("/fake/wlctl.sh", "disk", "mount-data", "--wait-seconds", "25", "--port", "COM37")] = ("X:/sport/gomore\n", "", 0)
+        runner.responses[("/fake/wlctl.sh", "disk", "mount-data", "--wait-seconds", "25", "--port", "COM37")] = ("X:/\n", "", 0)
         dev = WatchlinkDevice(mgr_port="COM37", cmd_runner=runner, wlctl_path=Path("/fake/wlctl.sh"))
         output = dev.mount_data(timeout=25)
-        self.assertIn("gomore", output)
+        self.assertIn("X:/", output)
 
     def test_mount_data_root_parses_last_root_line(self) -> None:
         runner = MockCmdRunner()
         runner.responses[("/fake/wlctl.sh", "disk", "mount-data", "--wait-seconds", "25", "--port", "COM37")] = (
-            "[INFO] DATA disk mode: FS\nX:/sport/gomore\n",
+            "[INFO] DATA disk mode: FS\nX:/\n",
             "",
             0,
         )
         dev = WatchlinkDevice(mgr_port="COM37", cmd_runner=runner, wlctl_path=Path("/fake/wlctl.sh"))
-        self.assertEqual(dev.mount_data_root(timeout=25), Path("X:/sport/gomore"))
+        with mock.patch.object(wlctl_sdk, "select_data_root", return_value=Path("X:/")):
+            self.assertEqual(dev.mount_data_root(timeout=25), Path("X:/"))
+
+    def test_mount_data_root_raises_when_no_verified_data_disk(self) -> None:
+        runner = MockCmdRunner()
+        runner.responses[("/fake/wlctl.sh", "disk", "mount-data", "--wait-seconds", "25", "--port", "COM37")] = (
+            "[INFO] DATA disk mode: FS\nE:/\n",
+            "",
+            0,
+        )
+        dev = WatchlinkDevice(mgr_port="COM37", cmd_runner=runner, wlctl_path=Path("/fake/wlctl.sh"))
+        with mock.patch.object(wlctl_sdk, "select_data_root", return_value=None), \
+                mock.patch.object(wlctl_sdk, "_find_available_data_drives", return_value=[]):
+            with self.assertRaises(ValueError) as ctx:
+                dev.mount_data_root(timeout=25)
+        self.assertIn("无法找到正确的 DATA 盘", str(ctx.exception))
 
     def test_mount_log_uses_disk_subcommand(self) -> None:
         runner = MockCmdRunner()
@@ -169,13 +185,13 @@ class WatchlinkSdkTests(unittest.TestCase):
         output = dev.monkey_off()
         self.assertIn("stopped", output)
 
-    def test_detect_gomore_root_uses_explicit_root(self) -> None:
+    def test_detect_data_root_uses_explicit_data_root(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "mount"
-            gomore = root / "sport" / "gomore"
-            gomore.mkdir(parents=True)
+            root.mkdir(parents=True)
             dev = WatchlinkDevice(cmd_runner=MockCmdRunner(), wlctl_path=Path("/fake/wlctl.sh"))
-            self.assertEqual(dev.detect_gomore_root(explicit_root=str(root), timeout=1), gomore)
+            with mock.patch("common.disk_utils.get_volume_label", return_value="DATA A1B2"):
+                self.assertEqual(dev.detect_data_root(explicit_root=str(root), timeout=1), root)
 
     def test_diagnose_returns_runtime_payload(self) -> None:
         dev = WatchlinkDevice(cmd_runner=MockCmdRunner(), wlctl_path=Path("/fake/wlctl.sh"))
@@ -197,8 +213,8 @@ class WatchlinkSdkTests(unittest.TestCase):
     def test_read_file_uses_mounted_data_root(self) -> None:
         runner = MockCmdRunner()
         with tempfile.TemporaryDirectory() as tmp:
-            mount_root = Path(tmp) / "sport" / "gomore"
-            sample_file = mount_root / "data_sample" / "sample.csv"
+            mount_root = Path(tmp) / "DATA"
+            sample_file = mount_root / "samples" / "sample.txt"
             sample_file.parent.mkdir(parents=True)
             sample_file.write_text("hello\n", encoding="utf-8")
             runner.responses[("/fake/wlctl.sh", "disk", "mount-data", "--wait-seconds", "30", "--port", "COM37")] = (
@@ -212,7 +228,8 @@ class WatchlinkSdkTests(unittest.TestCase):
                 0,
             )
             dev = WatchlinkDevice(mgr_port="COM37", cmd_runner=runner, wlctl_path=Path("/fake/wlctl.sh"))
-            self.assertEqual(dev.read_file("data", "data_sample/sample.csv"), "hello\n")
+            with mock.patch("common.fs_utils.verify_data_disk", return_value=True):
+                self.assertEqual(dev.read_file("data", "samples/sample.txt"), "hello\n")
 
     def test_pull_files_copies_matching_logs(self) -> None:
         runner = MockCmdRunner()
@@ -243,13 +260,13 @@ class WatchlinkSdkTests(unittest.TestCase):
         runner = MockCmdRunner()
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            mount_root = tmp_path / "sport" / "gomore"
+            mount_root = tmp_path / "DATA"
             mount_root.mkdir(parents=True)
-            source_root = tmp_path / "local_data_sample"
+            source_root = tmp_path / "local_payload"
             nested_source = source_root / "nested"
             nested_source.mkdir(parents=True)
-            sample_file = nested_source / "gomore_data_20260515_120000.csv"
-            sample_file.write_text("csv-body\n", encoding="utf-8")
+            sample_file = nested_source / "payload.txt"
+            sample_file.write_text("payload-body\n", encoding="utf-8")
             runner.responses[("/fake/wlctl.sh", "disk", "mount-data", "--wait-seconds", "30", "--port", "COM37")] = (
                 f"{mount_root}\n",
                 "",
@@ -261,18 +278,19 @@ class WatchlinkSdkTests(unittest.TestCase):
                 0,
             )
             dev = WatchlinkDevice(mgr_port="COM37", cmd_runner=runner, wlctl_path=Path("/fake/wlctl.sh"))
-            copied = dev.push_files("data", source_root, "data_sample")
-            target = mount_root / "data_sample" / "nested" / "gomore_data_20260515_120000.csv"
+            with mock.patch("common.fs_utils.verify_data_disk", return_value=True):
+                copied = dev.push_files("data", source_root, "payloads")
+            target = mount_root / "payloads" / "nested" / "payload.txt"
             self.assertEqual(copied, [target])
-            self.assertEqual(target.read_text(encoding="utf-8"), "csv-body\n")
+            self.assertEqual(target.read_text(encoding="utf-8"), "payload-body\n")
 
     def test_remove_paths_deletes_recursive_directory(self) -> None:
         runner = MockCmdRunner()
         with tempfile.TemporaryDirectory() as tmp:
-            mount_root = Path(tmp) / "sport" / "gomore"
-            target = mount_root / "data_sample" / "nested" / "gomore_data_20260515_120000.csv"
+            mount_root = Path(tmp) / "DATA"
+            target = mount_root / "payloads" / "nested" / "payload.txt"
             target.parent.mkdir(parents=True)
-            target.write_text("csv-body\n", encoding="utf-8")
+            target.write_text("payload-body\n", encoding="utf-8")
             runner.responses[("/fake/wlctl.sh", "disk", "mount-data", "--wait-seconds", "30", "--port", "COM37")] = (
                 f"{mount_root}\n",
                 "",
@@ -284,6 +302,7 @@ class WatchlinkSdkTests(unittest.TestCase):
                 0,
             )
             dev = WatchlinkDevice(mgr_port="COM37", cmd_runner=runner, wlctl_path=Path("/fake/wlctl.sh"))
-            removed = dev.remove_paths("data", "data_sample", recursive=True)
+            with mock.patch("common.fs_utils.verify_data_disk", return_value=True):
+                removed = dev.remove_paths("data", "payloads", recursive=True)
             self.assertFalse(target.exists())
             self.assertIn(target, removed)

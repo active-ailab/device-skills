@@ -4,11 +4,12 @@ import os
 import subprocess
 import sys
 import time
+import warnings
 from pathlib import Path
 from typing import Dict, Optional, Protocol, Sequence, Tuple
 
 from common.diagnose_utils import append_runtime_hint, diagnose_runtime
-from common.disk_utils import wait_for_disk_root
+from common.disk_utils import _find_available_data_drives, select_data_root, wait_for_disk_root
 from common.watchlink_discovery import build_wlctl_path
 
 
@@ -448,7 +449,57 @@ class WatchlinkDevice:
         return self.run_wlctl(args, timeout=max(float(timeout) + 30.0, 30.0))
 
     def mount_data_root(self, timeout: int = 30) -> Path:
-        return extract_disk_root(self.mount_data(timeout=timeout))
+        """挂载 DATA 盘并验证是否是正确的设备磁盘。
+
+        此方法会:
+        1. 执行挂载命令
+        2. 从输出中提取磁盘根路径
+        3. 验证该路径是否是 DATA 盘 (通过卷标区分 DATA/SYSTEM/WLINK/IMG)
+        4. 如果验证失败,自动查找其他可能的 DATA 盘
+
+        Args:
+            timeout: 挂载超时时间 (秒)
+
+        Returns:
+            验证通过的 DATA 盘根路径
+
+        Raises:
+            RuntimeError: 如果挂载失败
+            ValueError: 如果无法找到正确的 DATA 盘
+        """
+        mount_output = self.mount_data(timeout=timeout)
+        disk_root = extract_disk_root(mount_output)
+
+        selected = select_data_root([disk_root])
+        if selected:
+            return selected
+
+        # 验证失败,尝试查找其他 DATA 盘
+        warnings.warn(
+            f"SDK 返回的盘符 {disk_root} 验证失败,正在查找正确的 DATA 盘...",
+            UserWarning
+        )
+
+        available_drives = _find_available_data_drives()
+        selected = select_data_root([disk_root, *available_drives])
+        if selected:
+            warnings.warn(
+                f"找到正确的 DATA 盘: {selected} (而非 SDK 返回的 {disk_root})",
+                UserWarning
+            )
+            return selected
+
+        # 所有盘都验证失败
+        raise ValueError(
+            f"无法找到正确的 DATA 盘\n"
+            f"SDK 返回: {disk_root}\n"
+            f"已尝试的盘符: {available_drives}\n"
+            f"DATA 盘卷标应该包含 DATA, 且不能是 SYSTEM/WLINK/IMG 等分区\n"
+            f"请检查:\n"
+            f"  1. 设备是否正确连接\n"
+            f"  2. 通过 Windows 文件管理器确认卷标以 DATA 开头的实际盘符\n"
+            f"  3. 手动挂载: sudo mount -t drvfs F: /mnt/f (WSL 环境)"
+        )
 
     def mount_log(self, timeout: int = 30) -> str:
         args = ["disk", "mount-log", "--wait-seconds", str(timeout)]
@@ -471,7 +522,7 @@ class WatchlinkDevice:
             self._clock.sleep(settle_sec)
         return output
 
-    def detect_gomore_root(
+    def detect_data_root(
         self,
         timeout: int = 30,
         explicit_root: str = "",

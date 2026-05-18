@@ -1,6 +1,6 @@
 ---
 name: watchlink-v3
-description: Watch-Link V3 设备管理：串口(UART/MGR)发命令、monkey 测试自动化、固件烧录(v3dl app/ota)、磁盘挂载(mount data/log)、读取设备文件、读取指定路径、写文件到设备、pull/push device files、删除设备日志/文件、VBUS 电源控制、设备就绪检测与复位、端口自动发现、健康检查与运行时诊断。Windows/WSL/Linux。触发词: 串口连不上, 发串口命令, monkey 启动停止, 刷机, OTA 升级, 挂盘, 取日志, 读取设备文件, 读取指定路径, 写文件到设备, push CSV 到 data_sample, pull device logs, 删除设备日志, VBUS 没电, 设备不响应, 复位, COM 口找不到, 健康检查, quick check, WL+DISK, WL+RESET.
+description: Watch-Link V3 设备管理：串口(UART/MGR)发命令、monkey 测试自动化、固件烧录(v3dl app/ota)、磁盘挂载(mount data/log)、读取设备文件、读取指定路径、写文件到设备、pull/push device files、删除设备日志/文件、VBUS 电源控制、设备就绪检测与复位、端口自动发现、健康检查与运行时诊断。Windows/WSL/Linux。触发词: 串口连不上, 发串口命令, monkey 启动停止, 刷机, OTA 升级, 挂盘, 取日志, 读取设备文件, 读取指定路径, 写文件到设备, push 文件到 DATA 盘, pull device logs, 删除设备日志, VBUS 没电, 设备不响应, 复位, COM 口找不到, 健康检查, quick check, WL+DISK, WL+RESET.
 ---
 
 # Device WatchLink V3
@@ -196,7 +196,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\skills\device\watchlink-v3
 ./skills/device/watchlink-v3/scripts/linux/wlctl.sh monkey off
 ./skills/device/watchlink-v3/scripts/linux/wlctl.sh vbus status --output json
 ./skills/device/watchlink-v3/scripts/linux/wlctl.sh ready --timeout 60 --output json
-./skills/device/watchlink-v3/scripts/linux/wlctl.sh fs ls --disk data --path data_sample --output json
+./skills/device/watchlink-v3/scripts/linux/wlctl.sh fs ls --disk data --path payloads --output json
 ./skills/device/watchlink-v3/scripts/linux/wlctl.sh fs pull --disk log --from-path "**/*.log" --to-path ./img_logs
 ```
 
@@ -215,7 +215,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\\skills\\device\\watchlink
 powershell -NoProfile -ExecutionPolicy Bypass -File .\\skills\\device\\watchlink-v3\\scripts\\windows\\wlctl.ps1 awake -Timeout 15
 powershell -NoProfile -ExecutionPolicy Bypass -File .\\skills\\device\\watchlink-v3\\scripts\\windows\\wlctl.ps1 diagnose -Message "cmd.exe timed out" -Output json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\\skills\\device\\watchlink-v3\\scripts\\windows\\wlctl.ps1 vbus status -Output json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\\skills\\device\\watchlink-v3\\scripts\\windows\\wlctl.ps1 fs ls -Disk data -FsPath data_sample -Output json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\\skills\\device\\watchlink-v3\\scripts\\windows\\wlctl.ps1 fs ls -Disk data -FsPath payloads -Output json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\\skills\\device\\watchlink-v3\\scripts\\windows\\wlctl.ps1 fs pull -Disk log -FromPath "**/*.log" -ToPath .\\img_logs
 ```
 

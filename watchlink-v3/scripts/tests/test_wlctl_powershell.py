@@ -225,7 +225,7 @@ class WlctlPowerShellTests(unittest.TestCase):
                 "-Disk",
                 "data",
                 "-FsPath",
-                "data_sample",
+                "payloads",
                 "-Output",
                 "json",
                 env=self._build_env(tmp, mode="ready"),

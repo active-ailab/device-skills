@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence
 
+from common.disk_utils import verify_data_disk
+
 
 _WILDCARD_CHARS = "*?["
 _DEFAULT_MOUNT_HELPER = Path("/usr/local/sbin/watchlink-v3-mount-helper")
@@ -65,6 +67,69 @@ def _run_mount_helper(helper: Path, drive_letter: str, mount_point: Path) -> Non
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout).strip() or f"exit={proc.returncode}"
         raise RuntimeError(f"Mount helper failed for {drive_letter.upper()}: {detail}")
+
+
+def _run_mount_helper_cleanup(helper: Path, mount_point: Path) -> None:
+    proc = subprocess.run(
+        [
+            "sudo",
+            "-n",
+            str(helper),
+            "cleanup-drvfs-mount",
+            "--mount-point",
+            str(mount_point),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip() or f"exit={proc.returncode}"
+        raise RuntimeError(f"Mount helper cleanup failed for {mount_point}: {detail}")
+
+
+def _wsl_mount_point_for_root(root: Path) -> Optional[Path]:
+    path_text = str(root)
+    if _looks_like_windows_drive(path_text):
+        return _DEFAULT_WSL_MOUNT_BASE / path_text[0].lower()
+
+    try:
+        parts = root.resolve(strict=False).parts
+    except OSError:
+        parts = root.parts
+    if len(parts) >= 3 and parts[1] == "mnt" and len(parts[2]) == 1 and parts[2].isalpha():
+        return Path("/", parts[1], parts[2])
+    return None
+
+
+def cleanup_local_mount_root(root: Path) -> None:
+    if not is_wsl_environment():
+        return
+
+    mount_point = _wsl_mount_point_for_root(root)
+    if mount_point is None:
+        return
+
+    helper = _get_mount_helper()
+    if helper is not None:
+        _run_mount_helper_cleanup(helper, mount_point)
+        return
+
+    subprocess.run(
+        ["sudo", "-n", "umount", "-l", str(mount_point)],
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    subprocess.run(
+        ["sudo", "-n", "rm", "-rf", str(mount_point)],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
 
 
 def ensure_local_mount_root(root: Path) -> Path:
@@ -127,6 +192,17 @@ def ensure_local_mount_root(root: Path) -> Path:
     if rest:
         return Path(f"{mount_point}/{rest}")
     return mount_point
+
+
+def _ensure_data_mount_root(root: Path) -> Path:
+    mounted_root = ensure_local_mount_root(root)
+    if not verify_data_disk(mounted_root):
+        raise RuntimeError(
+            f"Mounted DATA root verification failed: {root} -> {mounted_root}. "
+            "Refusing to read/write because this may be the SYSTEM disk. "
+            "Check the actual DATA drive letter in Windows Explorer or run disk mount-data again."
+        )
+    return mounted_root
 
 
 def _has_magic(path_text: str) -> bool:
@@ -333,7 +409,10 @@ class MountedDiskSession:
         if self._skip_mount:
             if self._explicit_root is None:
                 raise ValueError("--skip-mount requires --root")
-            self._root = ensure_local_mount_root(self._explicit_root)
+            if self._disk == "data":
+                self._root = _ensure_data_mount_root(self._explicit_root)
+            else:
+                self._root = ensure_local_mount_root(self._explicit_root)
             return self
 
         if self._disk == "data":
@@ -346,7 +425,11 @@ class MountedDiskSession:
         except ImportError:
             from wlctl_sdk import extract_disk_root  # type: ignore
 
-        self._root = ensure_local_mount_root(extract_disk_root(mount_output))
+        root = extract_disk_root(mount_output)
+        if self._disk == "data":
+            self._root = _ensure_data_mount_root(root)
+        else:
+            self._root = ensure_local_mount_root(root)
         return self
 
     def __exit__(self, exc_type, exc, tb) -> bool:
@@ -355,6 +438,12 @@ class MountedDiskSession:
                 self.unmount_output = self._device.unmount(timeout=15)
             except Exception:
                 pass
+            finally:
+                if self._root is not None:
+                    try:
+                        cleanup_local_mount_root(self._root)
+                    except Exception:
+                        pass
         return False
 
     def list_paths(self, path: str = "", recursive: bool = False) -> List[Path]:
@@ -387,7 +476,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disk", choices=("data", "log"), required=True)
     parser.add_argument("--mgr-port", default="", help="Explicit MGR port for mount/unmount")
     parser.add_argument("--skip-mount", action="store_true", help="Use an already-mounted disk (requires --root)")
-    parser.add_argument("--root", default="", help="Explicit mounted root path (e.g. /mnt/f/sport/gomore, use with --skip-mount)")
+    parser.add_argument("--root", default="", help="Explicit mounted root path (e.g. /mnt/f, use with --skip-mount)")
     parser.add_argument("--path", default="", help="Device path relative to the mounted root")
     parser.add_argument("--from-path", default="", help="Device path or local source path")
     parser.add_argument("--to-path", default="", help="Local destination dir or device destination path")

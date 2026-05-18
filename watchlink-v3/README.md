@@ -68,10 +68,10 @@ watchlink-v3/
 
 ```bash
 ./scripts/linux/wlctl.sh disk mount-data
-./scripts/linux/wlctl.sh fs ls --disk data --path data_sample --output json
-./scripts/linux/wlctl.sh fs read --disk data --path data_sample/gomore_data_20260515_120000.csv
+./scripts/linux/wlctl.sh fs ls --disk data --path payloads --output json
+./scripts/linux/wlctl.sh fs read --disk data --path payloads/sample.txt
 ./scripts/linux/wlctl.sh fs pull --disk log --from-path "**/*.log" --to-path ./img_logs
-./scripts/linux/wlctl.sh fs push --disk data --from-path ./local_data_sample --to-path data_sample/
+./scripts/linux/wlctl.sh fs push --disk data --from-path ./local_payloads --to-path payloads/
 ./scripts/linux/wlctl.sh fs rm --disk log --path logs --recursive
 ```
 
@@ -88,7 +88,7 @@ dev = WatchlinkDevice(mgr_port="COM37", uart_port="COM38")
 dev.ensure_vbus_on()
 dev.wait_ready(timeout=60)
 dev.send_uart_cmd("monkey -g")
-content = dev.read_file("data", "data_sample/sample.csv")
+content = dev.read_file("data", "payloads/sample.txt")
 ```
 
 ## 团队安装（WSL 推荐）

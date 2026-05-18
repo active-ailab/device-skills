@@ -201,23 +201,75 @@ run_disk_mode() {
     ps1_win="$(wslpath -w "$DISK_PS1")"
     cmd=(/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$ps1_win" -Mode "$mode" -WaitSeconds "$wait_seconds")
     [[ -n "$port" ]] && cmd+=(-MgrPort "$port")
+    if [[ "$mode" == "unmount" ]]; then
+      run_disk_unmount_with_cleanup "${cmd[@]}"
+      return $?
+    fi
     exec "${cmd[@]}"
   fi
 
   if command -v powershell >/dev/null 2>&1; then
     cmd=(powershell -NoProfile -ExecutionPolicy Bypass -File "$DISK_PS1" -Mode "$mode" -WaitSeconds "$wait_seconds")
     [[ -n "$port" ]] && cmd+=(-MgrPort "$port")
+    if [[ "$mode" == "unmount" ]]; then
+      run_disk_unmount_with_cleanup "${cmd[@]}"
+      return $?
+    fi
     exec "${cmd[@]}"
   fi
 
   if command -v pwsh >/dev/null 2>&1; then
     cmd=(pwsh -NoProfile -ExecutionPolicy Bypass -File "$DISK_PS1" -Mode "$mode" -WaitSeconds "$wait_seconds")
     [[ -n "$port" ]] && cmd+=(-MgrPort "$port")
+    if [[ "$mode" == "unmount" ]]; then
+      run_disk_unmount_with_cleanup "${cmd[@]}"
+      return $?
+    fi
     exec "${cmd[@]}"
   fi
 
   echo "[ERR] No PowerShell runtime available for wlctl disk." >&2
   return 6
+}
+
+cleanup_wsl_mount_for_root() {
+  local root="$1"
+  local mount_point=""
+  local helper="${WLCTL_MOUNT_HELPER:-/usr/local/sbin/watchlink-v3-mount-helper}"
+
+  [[ "$root" =~ ^([A-Za-z]):[\\/]*$ ]] || return 0
+  mount_point="/mnt/${BASH_REMATCH[1],,}"
+
+  if [[ -x "$helper" ]]; then
+    sudo -n "$helper" cleanup-drvfs-mount --mount-point "$mount_point" >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  sudo -n umount -l "$mount_point" >/dev/null 2>&1 || true
+  sudo -n rm -rf "$mount_point" >/dev/null 2>&1 || true
+}
+
+run_disk_unmount_with_cleanup() {
+  local output=""
+  local status=0
+  local line=""
+  local cleanup_roots=()
+
+  output="$(WLCTL_UNMOUNT_EMIT_CLEANUP=1 "$@" 2>&1)" || status=$?
+
+  while IFS= read -r line; do
+    if [[ "$line" == "[WLCTL_CLEANUP_ROOT] "* ]]; then
+      cleanup_roots+=("${line#\[WLCTL_CLEANUP_ROOT\] }")
+      continue
+    fi
+    printf '%s\n' "$line"
+  done <<< "$output"
+
+  for line in "${cleanup_roots[@]}"; do
+    cleanup_wsl_mount_for_root "$line"
+  done
+
+  return $status
 }
 
 query_vbus_state() {

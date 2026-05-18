@@ -73,14 +73,14 @@ def collect_runtime_diagnostics(error_text: str) -> List[Dict[str, str]]:
         )
 
     if (
-        "unable to detect mounted windows gomore root" in lower
-        or "multiple mounted gomore roots detected" in lower
-        or "unable to auto-detect mounted gomore root" in lower
+        "unable to detect mounted windows data root" in lower
+        or "multiple mounted data roots detected" in lower
+        or "unable to auto-detect mounted data root" in lower
     ):
         add(
             "E_DATA_ROOT_DETECT",
-            "data-root 挂载/识别失败。先确认 Windows 侧是否真的出现 `<盘符>:\\sport\\gomore`，"
-            "WSL 下优先省略 `--disk-root`，不要再回到 `/mnt/f` 这类 legacy 路径。",
+            "DATA 分区挂载/识别失败。先确认 Windows 侧是否出现卷标包含 DATA 的设备盘，"
+            "WSL 下优先省略 `--disk-root`，由 watchlink-v3 自动选择 DATA 卷。",
         )
 
     if "vbus is off" in lower or ("wl+vbus" in lower and "off" in lower):
@@ -100,8 +100,8 @@ def collect_runtime_diagnostics(error_text: str) -> List[Dict[str, str]]:
     if "start marker not found" in lower:
         add(
             "E_UTEST_START_MISSING",
-            "utest 可能没有真正启动。确认设备上 `/storage/sport/gomore/data_sample/` 已有目标 CSV，"
-            "并且 `gomore_his.data` / `lactateData.data` 已清理。",
+            "utest 可能没有真正启动。请先确认业务层已把所需输入文件写入 DATA 分区的目标路径，"
+            "并完成对应业务状态清理。",
         )
 
     if "timeout waiting for test end" in lower or "test_timeout" in lower:

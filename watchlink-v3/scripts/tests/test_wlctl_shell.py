@@ -251,7 +251,7 @@ class WlctlShellTests(unittest.TestCase):
                     "--disk",
                     "data",
                     "--path",
-                    "data_sample",
+                    "payloads",
                     "--output",
                     "json",
                 ],
