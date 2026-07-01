@@ -166,6 +166,13 @@ def is_data_volume_label(label: str) -> bool:
     return normalized.startswith("DATA")
 
 
+def is_system_volume_label(label: str) -> bool:
+    normalized = (label or "").strip().upper()
+    if not normalized:
+        return False
+    return normalized.startswith("SYSTEM")
+
+
 def extract_disk_root(output: str) -> Path:
     for raw_line in reversed((output or "").splitlines()):
         line = raw_line.strip()
@@ -211,6 +218,26 @@ def verify_data_disk(drive_root: Path) -> bool:
 
     except Exception as e:
         warnings.warn(f"验证磁盘 {drive_root} 时出错: {e}", UserWarning)
+        return False
+
+
+def verify_system_disk(drive_root: Path) -> bool:
+    try:
+        label = get_volume_label(drive_root)
+        if not is_system_volume_label(label):
+            return False
+
+        windows_dirs = ["Windows", "Program Files", "Users", "ProgramData", "Recovery"]
+        for win_dir in windows_dirs:
+            if (drive_root / win_dir).is_dir():
+                warnings.warn(
+                    f"检测到 Windows 系统目录 {win_dir}, {drive_root} 不是设备 SYSTEM 盘",
+                    UserWarning,
+                )
+                return False
+        return True
+    except Exception as e:
+        warnings.warn(f"验证 SYSTEM 磁盘 {drive_root} 时出错: {e}", UserWarning)
         return False
 
 
@@ -268,6 +295,18 @@ def select_data_root(roots: Sequence[Path]) -> Optional[Path]:
         return None
 
     verified_roots = _dedupe_paths(root for root in roots if verify_data_disk(root))
+    if verified_roots:
+        return verified_roots[0]
+
+    return None
+
+
+def select_system_root(roots: Sequence[Path]) -> Optional[Path]:
+    roots = _dedupe_paths(Path(root) for root in roots)
+    if not roots:
+        return None
+
+    verified_roots = _dedupe_paths(root for root in roots if verify_system_disk(root))
     if verified_roots:
         return verified_roots[0]
 
@@ -404,11 +443,14 @@ if __name__ == "__main__":
 __all__ = [
     "detect_mount_roots",
     "select_data_root",
+    "select_system_root",
     "select_log_root",
     "wait_for_disk_root",
     "verify_data_disk",
+    "verify_system_disk",
     "get_volume_label",
     "is_data_volume_label",
+    "is_system_volume_label",
     "extract_disk_root",
     "extract_and_verify_data_disk",
     "_find_available_data_drives",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -237,6 +238,9 @@ class WatchlinkDeviceProtocol(Protocol):
     def mount_log(self, timeout: int = 30) -> str:
         ...
 
+    def mount_system(self, timeout: int = 30) -> str:
+        ...
+
     def unmount(self, timeout: int = 15) -> str:
         ...
 
@@ -340,6 +344,54 @@ def _wrap_wlctl_cmd(wlctl_path: Path, args: Sequence[str]) -> Sequence[str]:
     if wlctl_path.suffix.lower() == ".sh" and sys.platform == "win32":
         return ["bash", str(wlctl_path), *args]
     return [str(wlctl_path), *args]
+
+
+def _resolve_powershell_runtime() -> str:
+    configured = os.environ.get("WLCTL_POWERSHELL_BIN", "").strip()
+    if configured:
+        return configured
+    for candidate in ("powershell.exe", "powershell", "pwsh"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    wsl_powershell = Path("/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")
+    if wsl_powershell.exists():
+        return str(wsl_powershell)
+    return "powershell"
+
+
+def _to_windows_path_for_wsl(path: Path) -> str:
+    if not is_wsl_environment() or not shutil.which("wslpath"):
+        return str(path)
+    proc = run_cmd(["wslpath", "-w", str(path)], timeout=10.0, check=False)
+    if proc.returncode == 0 and proc.stdout.strip():
+        return proc.stdout.strip()
+    return str(path)
+
+
+def _build_disk_mode_cmd(wlctl_path: Path, mode: str, mgr_port: str, wait_seconds: int) -> Sequence[str]:
+    bridge = os.environ.get("WLCTL_DISK_BRIDGE_SH", "").strip()
+    if bridge:
+        return [bridge, mode, mgr_port, str(wait_seconds)]
+
+    configured_disk_ps1 = os.environ.get("WLCTL_DISK_PS1", "").strip()
+    disk_ps1 = Path(configured_disk_ps1) if configured_disk_ps1 else wlctl_path.parent.parent / "windows" / "disk_mode_auto.ps1"
+    script_path = _to_windows_path_for_wsl(disk_ps1) if is_wsl_environment() else str(disk_ps1)
+    cmd = [
+        _resolve_powershell_runtime(),
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        script_path,
+        "-Mode",
+        mode,
+        "-WaitSeconds",
+        str(wait_seconds),
+    ]
+    if mgr_port:
+        cmd.extend(["-MgrPort", mgr_port])
+    return cmd
 
 
 class WatchlinkDevice:
@@ -509,6 +561,14 @@ class WatchlinkDevice:
 
     def mount_log_root(self, timeout: int = 30) -> Path:
         return extract_disk_root(self.mount_log(timeout=timeout))
+
+    def mount_system(self, timeout: int = 30) -> str:
+        cmd = list(_build_disk_mode_cmd(self._wlctl_path, "mount-system", self.mgr_port, timeout))
+        stdout, stderr, rc = self._cmd.run(cmd, timeout=max(float(timeout) + 30.0, 30.0), cwd=None)
+        if rc != 0:
+            message = stderr.strip() or stdout.strip() or f"disk helper exited with code {rc}"
+            raise RuntimeError(append_runtime_hint(message))
+        return stdout
 
     def unmount(self, timeout: int = 15) -> str:
         args = ["disk", "unmount", "--wait-seconds", str(timeout)]

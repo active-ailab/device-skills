@@ -231,6 +231,18 @@ class WlctlShellTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("MODE=mount-data PORT=COM37 WAIT=31", proc.stdout)
 
+    def test_disk_mount_system_is_not_public_action(self) -> None:
+        proc = subprocess.run(
+            ["bash", str(WLCTL_SH), "disk", "mount-system"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("Unknown disk action", proc.stderr)
+
     def test_fs_subcommand_uses_python_override(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -267,3 +279,39 @@ class WlctlShellTests(unittest.TestCase):
             self.assertEqual(payload["argv"][0], "ls")
             self.assertIn("--disk", payload["argv"])
             self.assertIn("data", payload["argv"])
+
+    def test_fs_push_bstyle_uses_python_override_without_disk(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            fs_stub = tmp_path / "fs_stub.py"
+            fs_stub.write_text(
+                "import json, sys\nprint(json.dumps({'argv': sys.argv[1:]}))\n",
+                encoding="utf-8",
+            )
+
+            env = os.environ.copy()
+            env["WLCTL_FS_PY"] = str(fs_stub)
+            proc = subprocess.run(
+                [
+                    "bash",
+                    str(WLCTL_SH),
+                    "fs",
+                    "push-bstyle",
+                    "--from-path",
+                    "./Foo.bstyle",
+                    "--output",
+                    "json",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                env=env,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            payload = json.loads(proc.stdout)
+            self.assertEqual(payload["argv"][0], "push-bstyle")
+            self.assertIn("--from-path", payload["argv"])
+            self.assertIn("./Foo.bstyle", payload["argv"])
+            self.assertNotIn("--disk", payload["argv"])

@@ -7,6 +7,7 @@ Watch-Link V3 设备基础运行时，面向 Linux / WSL / Windows。
 - UART / MGR 串口命令路由
 - monkey 启停与状态查询
 - data / log 挂盘与卸盘
+- bstyle 推送到 SYSTEM/resources/styles
 - VBUS 控制
 - ready / awake 检测
 - 设备挂载文件系统读写：`fs ls/read/pull/push/rm`
@@ -73,7 +74,10 @@ watchlink-v3/
 ./scripts/linux/wlctl.sh fs pull --disk log --from-path "**/*.log" --to-path ./img_logs
 ./scripts/linux/wlctl.sh fs push --disk data --from-path ./local_payloads --to-path payloads/
 ./scripts/linux/wlctl.sh fs rm --disk log --path logs --recursive
+./scripts/linux/wlctl.sh fs push-bstyle --from-path ./Foo.bstyle
 ```
+
+`fs push-bstyle` 是受限入口：自动挂载设备 SYSTEM 盘，只写入 `resources/styles`，完成后自动卸载；不接受 `--disk` 或自定义目标目录。
 
 ## Python SDK 示例
 

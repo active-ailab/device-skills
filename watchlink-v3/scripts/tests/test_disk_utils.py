@@ -12,7 +12,16 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import common.disk_utils as disk_utils
-from common.disk_utils import is_data_volume_label, select_data_root, select_log_root, verify_data_disk, wait_for_disk_root
+from common.disk_utils import (
+    is_data_volume_label,
+    is_system_volume_label,
+    select_data_root,
+    select_log_root,
+    select_system_root,
+    verify_data_disk,
+    verify_system_disk,
+    wait_for_disk_root,
+)
 
 
 class DiskUtilsTests(unittest.TestCase):
@@ -24,6 +33,15 @@ class DiskUtilsTests(unittest.TestCase):
         self.assertFalse(is_data_volume_label("SYSTEM C3D4"))
         self.assertFalse(is_data_volume_label("WLINK"))
         self.assertFalse(is_data_volume_label("IMAGE"))
+
+    def test_is_system_volume_label_accepts_system_partition(self) -> None:
+        self.assertTrue(is_system_volume_label("SYSTEM C3D4"))
+        self.assertTrue(is_system_volume_label("system55cd"))
+
+    def test_is_system_volume_label_rejects_non_system_partitions(self) -> None:
+        self.assertFalse(is_system_volume_label("DATA A1B2"))
+        self.assertFalse(is_system_volume_label("WLINK"))
+        self.assertFalse(is_system_volume_label(""))
 
     def test_select_data_root_prefers_data_volume_label(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -47,6 +65,23 @@ class DiskUtilsTests(unittest.TestCase):
             root.mkdir()
             with mock.patch.object(disk_utils, "get_volume_label", return_value="DATA A1B2"):
                 self.assertTrue(verify_data_disk(root))
+
+    def test_select_system_root_prefers_system_volume_label(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root1 = Path(tmp) / "E"
+            root2 = Path(tmp) / "F"
+            root1.mkdir()
+            root2.mkdir()
+            labels = {root1: "DATA A1B2", root2: "SYSTEM C3D4"}
+            with mock.patch.object(disk_utils, "get_volume_label", side_effect=lambda root: labels.get(root, "")):
+                self.assertEqual(select_system_root([root1, root2]), root2)
+
+    def test_verify_system_disk_rejects_windows_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "C"
+            (root / "Windows").mkdir(parents=True)
+            with mock.patch.object(disk_utils, "get_volume_label", return_value="SYSTEM"):
+                self.assertFalse(verify_system_disk(root))
 
     def test_select_log_root_prefers_img_partition(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

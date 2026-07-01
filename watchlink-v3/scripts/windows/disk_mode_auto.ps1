@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('mount-data','mount-log','unmount')]
+    [ValidateSet('mount-data','mount-log','mount-system','unmount')]
     [string]$Mode,
 
     [string]$MgrPort,
@@ -26,6 +26,25 @@ if (-not (Test-Path $PortResolver)) {
 
 . $PortResolver
 
+function Resolve-PowerShellRuntime {
+    if (-not [string]::IsNullOrWhiteSpace($env:WLCTL_POWERSHELL_BIN)) {
+        return $env:WLCTL_POWERSHELL_BIN
+    }
+    $cmd = Get-Command powershell.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    if (-not [string]::IsNullOrWhiteSpace($env:SystemRoot)) {
+        $winPs = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+        if (Test-Path $winPs) { return $winPs }
+    }
+    $cmd = Get-Command powershell -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    $cmd = Get-Command pwsh -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    throw 'No PowerShell runtime found.'
+}
+
+$PowerShellRuntime = Resolve-PowerShellRuntime
+
 $script:ResolvedMgrPort = Resolve-WlinkRolePort -Role 'MGR' -ExplicitPort $MgrPort -NoPortHint "Pass -MgrPort explicitly."
 Write-Output ("[INFO] Using MGR port: {0}" -f $script:ResolvedMgrPort)
 
@@ -42,8 +61,9 @@ function Invoke-MgrCommand {
         '-ReadWindowMs',"$ReadMs",
         '-Command',$Command
     )
-    $out = & powershell @args 2>&1
-    $exitCode = $LASTEXITCODE
+    $out = & $PowerShellRuntime @args 2>&1
+    $lastExit = Get-Variable -Name LASTEXITCODE -ErrorAction SilentlyContinue
+    $exitCode = if ($lastExit) { [int]$lastExit.Value } else { 0 }
     $text = [string]($out -join "`n")
 
     Write-Output ("[MGR] {0}" -f $Command)
@@ -144,6 +164,11 @@ function Test-DataVolumeLabel([string]$Label) {
     return $normalized.StartsWith('DATA')
 }
 
+function Test-SystemVolumeLabel([string]$Label) {
+    if ([string]::IsNullOrWhiteSpace($Label)) { return $false }
+    return $Label.ToUpperInvariant().StartsWith('SYSTEM')
+}
+
 function Test-WatchlinkVolumeLabel([string]$Label) {
     if ([string]::IsNullOrWhiteSpace($Label)) { return $false }
     $normalized = $Label.ToUpperInvariant()
@@ -174,6 +199,16 @@ function Select-DataRoot([string[]]$Roots) {
 
     foreach ($root in $Roots) {
         if (Test-DataVolumeLabel -Label (Get-DriveVolumeLabel -Root $root)) { return $root }
+    }
+
+    return $null
+}
+
+function Select-SystemRoot([string[]]$Roots) {
+    if ($Roots.Count -eq 0) { return $null }
+
+    foreach ($root in $Roots) {
+        if (Test-SystemVolumeLabel -Label (Get-DriveVolumeLabel -Root $root)) { return $root }
     }
 
     return $null
@@ -246,6 +281,20 @@ function Mount-DataDisk {
     throw 'No data disk root mounted after WL+VBUS=TEMP WL+DISK=FS.'
 }
 
+function Mount-SystemDisk {
+    [void](Invoke-MgrCommand -Command 'WL+VBUS=TEMP WL+DISK=FS' -AllowNoResponse)
+    Start-Sleep -Seconds 2
+
+    $root = Wait-Root -Selector { param($roots) Select-SystemRoot -Roots $roots }
+    if ($root) {
+        Write-Output '[INFO] SYSTEM disk mode: FS'
+        Write-Output $root
+        return
+    }
+
+    throw 'No system disk root mounted after WL+VBUS=TEMP WL+DISK=FS.'
+}
+
 function Mount-LogDisk {
     [void](Invoke-MgrCommand -Command 'WL+VBUS=TEMP WL+DISK=IMG' -AllowNoResponse)
     Start-Sleep -Seconds 2
@@ -262,6 +311,7 @@ function Mount-LogDisk {
 switch ($Mode) {
     'mount-data' { Mount-DataDisk; break }
     'mount-log' { Mount-LogDisk; break }
+    'mount-system' { Mount-SystemDisk; break }
     'unmount' {
         Unmount-Disk
         Write-Output 'UNMOUNTED'

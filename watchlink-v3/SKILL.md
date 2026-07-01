@@ -88,6 +88,7 @@ Expose these operations to higher-level skills:
 9. Machine-readable status: `wlctl vbus|ready|awake ... --output json` / `-Output json`
 10. Port selection: omit the port by default and let the script auto-detect; pass `--port` only when needed
 11. Device filesystem primitives: `wlctl fs ls|read|pull|push|rm`
+12. Bstyle push: `wlctl fs push-bstyle --from-path <file-or-dir>` writes only to `SYSTEM/resources/styles` and unmounts automatically.
 
 ## Guardrails
 
@@ -101,6 +102,7 @@ Follow these rules strictly:
   - requests like `下载固件整包`、`下载OTA包`、`全量下载` go to `v3dl ota`
 - If the user does not provide `<PROJECT_ROOT>`, ask for it instead of guessing.
 - If the port is omitted on Windows, prefer Windows port entries from `Get-PnpDevice -Class Ports` or, when that is permission-limited, `pnputil /enum-devices /class Ports`, using only `OK`/`Started` `WLINK <id> MGR/UART (COMx)` pairs. If exactly one online WLINK device pair exists, use that pair automatically. Otherwise fall back to existing auto-detection and require an explicit port when multiple matches remain.
+- For bstyle deployment, use `fs push-bstyle`; do not expose generic SYSTEM disk read/write/delete or arbitrary SYSTEM target paths.
 - Require an extra confirmation before risky operations such as `fm_ota`, formatting, or `WRITE_OTP`.
 
 ## Keyword Mapping

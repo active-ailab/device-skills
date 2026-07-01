@@ -21,7 +21,7 @@ Usage:
   wlctl.sh monkey off [--port PORT]
   wlctl.sh monkey status [--port PORT]
   wlctl.sh disk mount-data|mount-log|unmount [--port PORT] [--wait-seconds N]
-  wlctl.sh fs ls|read|pull|push|rm [fs args...]
+  wlctl.sh fs ls|read|pull|push|rm|push-bstyle [fs args...]
   wlctl.sh vbus on|off|status [--port PORT] [--output json|text]
   wlctl.sh ready [--port PORT] [--timeout N] [--probe-cmd CMD] [--output json|text]
   wlctl.sh awake [--port PORT] [--timeout N] [--output json|text]

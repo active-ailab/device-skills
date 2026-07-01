@@ -96,6 +96,15 @@ class WatchlinkSdkTests(unittest.TestCase):
         output = dev.mount_log(timeout=22)
         self.assertIn("IMAGE", output)
 
+    def test_mount_system_uses_internal_disk_helper_not_public_wlctl_action(self) -> None:
+        runner = MockCmdRunner()
+        runner.responses[("/fake/disk_bridge.sh", "mount-system", "COM37", "25")] = ("X:/\n", "", 0)
+        dev = WatchlinkDevice(mgr_port="COM37", cmd_runner=runner, wlctl_path=Path("/fake/wlctl.sh"))
+        with mock.patch.dict(wlctl_sdk.os.environ, {"WLCTL_DISK_BRIDGE_SH": "/fake/disk_bridge.sh"}):
+            output = dev.mount_system(timeout=25)
+        self.assertIn("X:/", output)
+        self.assertEqual(runner.calls[0][0], ("/fake/disk_bridge.sh", "mount-system", "COM37", "25"))
+
     def test_mount_log_root_parses_last_root_line(self) -> None:
         runner = MockCmdRunner()
         runner.responses[("/fake/wlctl.sh", "disk", "mount-log", "--wait-seconds", "22", "--port", "COM37")] = (

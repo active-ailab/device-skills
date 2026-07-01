@@ -100,3 +100,88 @@ class FsUtilsTests(unittest.TestCase):
             self.assertEqual(copied, [out / "logs" / "run.log"])
             self.assertEqual(copied_text, "log-body\n")
             copyfile_mock.assert_called_once()
+
+    def test_push_bstyle_mounts_system_and_writes_fixed_styles_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            system_root = base / "SYSTEM"
+            system_root.mkdir()
+            source = base / "Foo.bstyle"
+            source.write_text("style", encoding="utf-8")
+
+            class FakeDevice:
+                unmounted = False
+
+                def mount_system(self, timeout: int = 30) -> str:
+                    return f"{system_root}\n"
+
+                def unmount(self, timeout: int = 15) -> str:
+                    self.unmounted = True
+                    return "UNMOUNTED\n"
+
+            fake = FakeDevice()
+
+            with mock.patch.object(fs_utils, "verify_system_disk", return_value=True):
+                with fs_utils.MountedDiskSession(fake, "system") as session:
+                    copied = session.push_files(
+                        source,
+                        str(Path("resources") / "styles") + fs_utils.os.sep,
+                    )
+
+            expected = system_root / "resources" / "styles" / "Foo.bstyle"
+            self.assertEqual(copied, [expected.resolve(strict=False)])
+            self.assertEqual(expected.read_text(encoding="utf-8"), "style")
+            self.assertTrue(fake.unmounted)
+
+    def test_push_bstyle_rejects_disk_argument(self) -> None:
+        with self.assertRaises(SystemExit) as ctx:
+            fs_utils.main(["push-bstyle", "--disk", "data", "--from-path", "Foo.bstyle"])
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_push_bstyle_rejects_non_bstyle_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "Foo.txt"
+            source.write_text("style", encoding="utf-8")
+
+            with self.assertRaises(SystemExit) as ctx:
+                fs_utils.main(["push-bstyle", "--from-path", str(source)])
+
+        self.assertEqual(ctx.exception.code, 2)
+
+    def test_push_bstyle_directory_ignores_non_bstyle_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source_dir = base / "styles"
+            system_root = base / "SYSTEM"
+            nested_dir = source_dir / "nested"
+            nested_dir.mkdir(parents=True)
+            system_root.mkdir()
+            (source_dir / "Foo.bstyle").write_text("style", encoding="utf-8")
+            (source_dir / "note.txt").write_text("not style", encoding="utf-8")
+            (nested_dir / "Bar.bstyle").write_text("nested style", encoding="utf-8")
+
+            class FakeDevice:
+                def mount_system(self, timeout: int = 30) -> str:
+                    return f"{system_root}\n"
+
+                def unmount(self, timeout: int = 15) -> str:
+                    return "UNMOUNTED\n"
+
+            with mock.patch.object(fs_utils, "verify_system_disk", return_value=True):
+                with fs_utils.MountedDiskSession(FakeDevice(), "system") as session:
+                    copied = session.push_bstyle_files(
+                        source_dir,
+                        str(Path("resources") / "styles") + fs_utils.os.sep,
+                    )
+
+            self.assertEqual((system_root / "resources" / "styles" / "Foo.bstyle").read_text(encoding="utf-8"), "style")
+            self.assertEqual((system_root / "resources" / "styles" / "Bar.bstyle").read_text(encoding="utf-8"), "nested style")
+            self.assertFalse((system_root / "resources" / "styles" / "note.txt").exists())
+            self.assertFalse((system_root / "resources" / "styles" / "nested").exists())
+            self.assertEqual(
+                copied,
+                [
+                    (system_root / "resources" / "styles" / "Foo.bstyle").resolve(strict=False),
+                    (system_root / "resources" / "styles" / "Bar.bstyle").resolve(strict=False),
+                ],
+            )

@@ -62,6 +62,7 @@ Usage:
   wlctl.ps1 monkey status [-Port COMx]
   wlctl.ps1 disk mount-data|mount-log|unmount [-Port COMx]
   wlctl.ps1 fs ls|read|pull|push|rm -Disk data|log [fs args...]
+  wlctl.ps1 fs push-bstyle -FromPath <path>
   wlctl.ps1 vbus on|off|status [-Port COMx] [-Output json|text]
   wlctl.ps1 ready [-Port COMx] [-Timeout N] [-ProbeCommand CMD] [-Output json|text]
   wlctl.ps1 awake [-Port COMx] [-Timeout N] [-ProbeCommand CMD] [-Output json|text]
@@ -434,11 +435,17 @@ function Invoke-Diagnose([string]$message, [string]$messageFile, [string]$format
 }
 
 function Invoke-Fs([string]$subAction) {
-    if ([string]::IsNullOrWhiteSpace($Disk)) {
+    if ($subAction -eq 'push-bstyle' -and -not [string]::IsNullOrWhiteSpace($Disk)) {
+        throw "fs push-bstyle uses SYSTEM/resources/styles automatically; do not pass -Disk"
+    }
+    if ($subAction -ne 'push-bstyle' -and [string]::IsNullOrWhiteSpace($Disk)) {
         throw "fs requires -Disk data|log"
     }
     $python = @(Resolve-PythonInvocation)
-    $args = @($python + @($FsPy, $subAction, '--disk', $Disk, '--output', $OutputFormat))
+    $args = @($python + @($FsPy, $subAction, '--output', $OutputFormat))
+    if (-not [string]::IsNullOrWhiteSpace($Disk)) {
+        $args += @('--disk', $Disk)
+    }
     if (-not [string]::IsNullOrWhiteSpace($Port)) {
         $args += @('--mgr-port', $Port)
     }
@@ -521,8 +528,8 @@ switch ($Action) {
     }
     'fs' {
         $sub = if ($Arg1) { $Arg1.ToLowerInvariant() } else { '' }
-        if ($sub -notin @('ls','read','pull','push','rm')) {
-            throw "fs requires sub-action: ls|read|pull|push|rm"
+        if ($sub -notin @('ls','read','pull','push','rm','push-bstyle')) {
+            throw "fs requires sub-action: ls|read|pull|push|rm|push-bstyle"
         }
         Invoke-Fs -subAction $sub
     }

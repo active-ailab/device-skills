@@ -9,10 +9,12 @@ import sys
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence
 
-from common.disk_utils import verify_data_disk
+from common.disk_utils import verify_data_disk, verify_system_disk
 
 
 _WILDCARD_CHARS = "*?["
+_BSTYLE_TARGET_DIR = Path("resources") / "styles"
+_BSTYLE_SUFFIX = ".bstyle"
 _DEFAULT_MOUNT_HELPER = Path("/usr/local/sbin/watchlink-v3-mount-helper")
 _DEFAULT_WSL_MOUNT_BASE = Path(
     os.environ.get("WLCTL_WSL_MOUNT_BASE", "/mnt")
@@ -205,6 +207,32 @@ def _ensure_data_mount_root(root: Path) -> Path:
     return mounted_root
 
 
+def _ensure_system_mount_root(root: Path) -> Path:
+    mounted_root = ensure_local_mount_root(root)
+    if not verify_system_disk(mounted_root):
+        raise RuntimeError(
+            f"Mounted SYSTEM root verification failed: {root} -> {mounted_root}. "
+            "Refusing to write bstyle resources because this may not be the device SYSTEM disk."
+        )
+    return mounted_root
+
+
+def _collect_bstyle_sources(source: Path) -> tuple[Path, List[Path]]:
+    source_path = source.expanduser().resolve()
+    if not source_path.exists():
+        raise FileNotFoundError(f"Local source not found: {source_path}")
+
+    if source_path.is_file():
+        if source_path.suffix.lower() != _BSTYLE_SUFFIX:
+            raise ValueError(f"push-bstyle only accepts .bstyle files: {source_path}")
+        return source_path, [source_path]
+
+    bstyle_files = sorted((item for item in source_path.rglob("*") if item.is_file() and item.suffix.lower() == _BSTYLE_SUFFIX), key=str)
+    if not bstyle_files:
+        raise ValueError(f"push-bstyle found no .bstyle files under: {source_path}")
+    return source_path, bstyle_files
+
+
 def _has_magic(path_text: str) -> bool:
     return any(ch in path_text for ch in _WILDCARD_CHARS)
 
@@ -327,6 +355,26 @@ def push_to_mounted_root(root: Path, from_path: Path, to_path: str = "") -> List
     return copied
 
 
+def push_bstyle_to_mounted_root(root: Path, from_path: Path, to_path: str) -> List[Path]:
+    mounted_root = ensure_local_mount_root(root)
+    source, bstyle_files = _collect_bstyle_sources(from_path)
+    destination_root = resolve_device_path(mounted_root, to_path)
+
+    copied: List[Path] = []
+    if source.is_file():
+        if to_path.endswith("/") or destination_root.is_dir():
+            destination = destination_root / source.name
+        else:
+            destination = destination_root
+        copied.append(_copy_file_to_destination(source, destination))
+        return copied
+
+    destination_root.mkdir(parents=True, exist_ok=True)
+    for child in bstyle_files:
+        copied.append(_copy_file_to_destination(child, destination_root / child.name))
+    return copied
+
+
 def remove_from_mounted_root(
     root: Path,
     path: str,
@@ -387,8 +435,8 @@ class MountedDiskSession:
         explicit_root: str | Path | None = None,
     ):
         disk_normalized = disk.strip().lower()
-        if disk_normalized not in {"data", "log"}:
-            raise ValueError("disk must be 'data' or 'log'")
+        if disk_normalized not in {"data", "log", "system"}:
+            raise ValueError("disk must be 'data', 'log' or 'system'")
         self._device = device
         self._disk = disk_normalized
         self._timeout = timeout
@@ -411,12 +459,16 @@ class MountedDiskSession:
                 raise ValueError("--skip-mount requires --root")
             if self._disk == "data":
                 self._root = _ensure_data_mount_root(self._explicit_root)
+            elif self._disk == "system":
+                self._root = _ensure_system_mount_root(self._explicit_root)
             else:
                 self._root = ensure_local_mount_root(self._explicit_root)
             return self
 
         if self._disk == "data":
             mount_output = self._device.mount_data(timeout=self._timeout)
+        elif self._disk == "system":
+            mount_output = self._device.mount_system(timeout=self._timeout)
         else:
             mount_output = self._device.mount_log(timeout=self._timeout)
         self.mount_output = mount_output
@@ -428,6 +480,8 @@ class MountedDiskSession:
         root = extract_disk_root(mount_output)
         if self._disk == "data":
             self._root = _ensure_data_mount_root(root)
+        elif self._disk == "system":
+            self._root = _ensure_system_mount_root(root)
         else:
             self._root = ensure_local_mount_root(root)
         return self
@@ -458,6 +512,9 @@ class MountedDiskSession:
     def push_files(self, from_path: Path, to_path: str = "") -> List[Path]:
         return push_to_mounted_root(self.root, from_path=from_path, to_path=to_path)
 
+    def push_bstyle_files(self, from_path: Path, to_path: str) -> List[Path]:
+        return push_bstyle_to_mounted_root(self.root, from_path=from_path, to_path=to_path)
+
     def remove_paths(self, path: str, *, recursive: bool = False, missing_ok: bool = True) -> List[Path]:
         return remove_from_mounted_root(self.root, path, recursive=recursive, missing_ok=missing_ok)
 
@@ -472,8 +529,8 @@ def _format_json(data: object) -> str:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Watch-Link mounted filesystem helpers")
-    parser.add_argument("action", choices=("ls", "read", "pull", "push", "rm"))
-    parser.add_argument("--disk", choices=("data", "log"), required=True)
+    parser.add_argument("action", choices=("ls", "read", "pull", "push", "rm", "push-bstyle"))
+    parser.add_argument("--disk", choices=("data", "log"), required=False)
     parser.add_argument("--mgr-port", default="", help="Explicit MGR port for mount/unmount")
     parser.add_argument("--skip-mount", action="store_true", help="Use an already-mounted disk (requires --root)")
     parser.add_argument("--root", default="", help="Explicit mounted root path (e.g. /mnt/f, use with --skip-mount)")
@@ -491,6 +548,15 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
+    if args.action != "push-bstyle" and not args.disk:
+        parser.error("--disk is required")
+    if args.action == "push-bstyle":
+        if args.disk:
+            parser.error("push-bstyle uses SYSTEM/resources/styles automatically; do not pass --disk")
+        if args.skip_mount or args.root:
+            parser.error("push-bstyle manages SYSTEM mount automatically; do not pass --skip-mount or --root")
+        if args.path or args.to_path or args.recursive or args.missing_ok:
+            parser.error("push-bstyle only accepts --from-path plus mount/output options")
 
     try:
         from .wlctl_sdk import WatchlinkDevice
@@ -507,6 +573,36 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         except ImportError:
             from wlctl_sdk import WatchlinkDevice  # type: ignore
         dev = WatchlinkDevice(mgr_port=args.mgr_port)
+
+    if args.action == "push-bstyle":
+        if not args.from_path:
+            parser.error("push-bstyle requires --from-path")
+        try:
+            _collect_bstyle_sources(Path(args.from_path))
+        except Exception as exc:
+            parser.error(str(exc))
+        with MountedDiskSession(dev, "system", timeout=args.wait_seconds) as session:
+            target_dir = str(_BSTYLE_TARGET_DIR) + os.sep
+            try:
+                copied = session.push_bstyle_files(Path(args.from_path), target_dir)
+            except Exception as exc:
+                parser.error(str(exc))
+            if args.output == "json":
+                print(
+                    _format_json(
+                        {
+                            "action": "push-bstyle",
+                            "disk": "system",
+                            "target": str(_BSTYLE_TARGET_DIR),
+                            "copied": [str(path) for path in copied],
+                            "count": len(copied),
+                        }
+                    ),
+                    end="",
+                )
+            else:
+                print(_format_text_lines(copied), end="")
+            return 0
 
     with MountedDiskSession(
         dev,

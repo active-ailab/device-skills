@@ -235,3 +235,23 @@ class WlctlPowerShellTests(unittest.TestCase):
         self.assertEqual(payload["argv"][0], "ls")
         self.assertIn("--disk", payload["argv"])
         self.assertIn("data", payload["argv"])
+
+    def test_fs_push_bstyle_uses_python_override_without_disk(self) -> None:
+        if not WINDOWS_PYTHON:
+            self.skipTest("Windows python runtime not available")
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = self._run(
+                "fs",
+                "push-bstyle",
+                "-FromPath",
+                ".\\Foo.bstyle",
+                "-Output",
+                "json",
+                env=self._build_env(tmp, mode="ready"),
+            )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["argv"][0], "push-bstyle")
+        self.assertIn("--from-path", payload["argv"])
+        self.assertIn(".\\Foo.bstyle", payload["argv"])
+        self.assertNotIn("--disk", payload["argv"])
